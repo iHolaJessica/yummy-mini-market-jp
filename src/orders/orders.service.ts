@@ -1,6 +1,11 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
+import { InjectConnection, InjectModel } from '@nestjs/mongoose';
+import { Connection, Model } from 'mongoose';
 import { Order, OrderDocument, OrderItem } from './schemas/order.schema';
 import { Product, ProductDocument } from '../products/schemas/product.schema';
 import { Wallet, WalletDocument } from '../wallet/schemas/wallet.schema';
@@ -15,6 +20,7 @@ export class OrdersService {
   private readonly logger = new Logger(OrdersService.name);
 
   constructor(
+    @InjectConnection() private readonly connection: Connection,
     @InjectModel(Order.name)
     private readonly orderModel: Model<OrderDocument>,
     @InjectModel(Product.name)
@@ -52,42 +58,71 @@ export class OrdersService {
   }
 
   async pay(userId: string, orderId: string) {
+    const order = await this.orderModel.findOne({ _id: orderId, userId });
+    if (!order) {
+      throw new NotFoundException('Orden no encontrada');
+    }
+    if (order.status === 'paid') {
+      return order;
+    }
+
+    const session = await this.connection.startSession();
+
     try {
-      const order = await this.orderModel.findById(orderId);
-      if (!order || order.status === 'paid') {
-        return order;
-      }
+      await session.withTransaction(async () => {
+        const pending = await this.orderModel
+          .findOne({ _id: orderId, userId, status: 'pending' })
+          .session(session);
 
-      const wallet = await this.walletModel.findOne({ userId });
-      if (wallet && wallet.balanceCents >= order.totalCents) {
-        wallet.balanceCents -= order.totalCents;
-        await wallet.save();
-
-        for (const item of order.items) {
-          const product = await this.productModel.findById(item.productId);
-          product.stock -= item.qty;
-          await product.save();
+        if (!pending) {
+          return;
         }
 
-        order.status = 'paid';
-        await order.save();
+        const wallet = await this.walletModel.findOne({ userId }).session(session);
+        if (!wallet || wallet.balanceCents < pending.totalCents) {
+          throw new BadRequestException('Saldo insuficiente');
+        }
 
-        await this.txModel.create({
-          userId,
-          amountCents: -order.totalCents,
-          type: 'payment',
-          orderId,
-        });
-      }
+        wallet.balanceCents -= pending.totalCents;
+        await wallet.save({ session });
 
-      return order;
-    } catch (e) {
-      return { status: 'ok' };
+        for (const item of pending.items) {
+          const updated = await this.productModel.findOneAndUpdate(
+            { _id: item.productId, stock: { $gte: item.qty } },
+            { $inc: { stock: -item.qty } },
+            { session, new: true },
+          );
+          if (!updated) {
+            throw new BadRequestException(
+              `Stock insuficiente para producto ${item.productId}`,
+            );
+          }
+        }
+
+        pending.status = 'paid';
+        await pending.save({ session });
+
+        await this.txModel.create(
+          [
+            {
+              userId,
+              amountCents: -pending.totalCents,
+              type: 'payment',
+              orderId,
+            },
+          ],
+          { session },
+        );
+      });
+    } finally {
+      await session.endSession();
     }
+
+    return this.orderModel.findOne({ _id: orderId, userId });
   }
 
   async findOneForUser(userId: string, orderId: string) {
-    const order = await this.orderModel.findById(orderId);
+    const order = await this.orderModel.findOne({ _id: orderId, userId });
     if (!order) {
       throw new NotFoundException('Orden no encontrada');
     }

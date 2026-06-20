@@ -2,7 +2,7 @@ import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { MongooseModule, getModelToken } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { MongoMemoryServer } from 'mongodb-memory-server';
+import { MongoMemoryReplSet } from 'mongodb-memory-server';
 import { ProductsModule } from '../src/products/products.module';
 import { OrdersModule } from '../src/orders/orders.module';
 import { WalletModule } from '../src/wallet/wallet.module';
@@ -21,8 +21,10 @@ export interface TestContext {
  * conciliación para mantener los tests deterministas.
  */
 export async function createTestApp(): Promise<TestContext> {
-  const mongod = await MongoMemoryServer.create();
-  const uri = mongod.getUri();
+  const replSet = await MongoMemoryReplSet.create({
+    replSet: { count: 1 },
+  });
+  const uri = replSet.getUri();
 
   const moduleRef = await Test.createTestingModule({
     imports: [
@@ -41,7 +43,7 @@ export async function createTestApp(): Promise<TestContext> {
 
   const stop = async () => {
     await app.close();
-    await mongod.stop();
+    await replSet.stop();
   };
 
   return { app, productModel, stop };
