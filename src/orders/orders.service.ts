@@ -1,5 +1,7 @@
 import {
   BadRequestException,
+  ConflictException,
+  HttpException,
   Injectable,
   Logger,
   NotFoundException,
@@ -63,7 +65,7 @@ export class OrdersService {
       throw new NotFoundException('Orden no encontrada');
     }
     if (order.status === 'paid') {
-      return order;
+      throw new ConflictException('La orden ya fue pagada');
     }
 
     const session = await this.connection.startSession();
@@ -114,6 +116,12 @@ export class OrdersService {
           { session },
         );
       });
+    } catch (e) {
+      if (e instanceof HttpException) {
+        throw e;
+      }
+      this.logger.error(`Error inesperado al pagar orden ${orderId}`, e);
+      throw e;
     } finally {
       await session.endSession();
     }

@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Headers,
+  HttpCode,
   Param,
   Post,
 } from '@nestjs/common';
@@ -14,6 +15,7 @@ export class OrdersController {
   constructor(private readonly orders: OrdersService) {}
 
   @Post()
+  @HttpCode(201)
   create(
     @Headers('x-user-id') userId: string,
     @Body() dto: CreateOrderDto,
@@ -22,6 +24,7 @@ export class OrdersController {
   }
 
   @Post(':id/pay')
+  @HttpCode(200)
   pay(@Headers('x-user-id') userId: string, @Param('id') id: string) {
     return this.orders.pay(userId, id);
   }

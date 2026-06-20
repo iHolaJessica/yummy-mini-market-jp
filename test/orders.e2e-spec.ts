@@ -45,9 +45,32 @@ describe('Orders', () => {
     const paid = await request(server)
       .post(`/orders/${orderId}/pay`)
       .set('x-user-id', user)
-      .expect(201);
+      .expect(200);
 
     expect(paid.body.status).toBe('paid');
+  });
+
+  it('rechaza el pago cuando el saldo es insuficiente', async () => {
+    const user = 'user-no-funds';
+    const productId = await seedProduct(850, 10);
+
+    const created = await request(server)
+      .post('/orders')
+      .set('x-user-id', user)
+      .send({ items: [{ productId, qty: 1 }] })
+      .expect(201);
+
+    await request(server)
+      .post(`/orders/${created.body._id}/pay`)
+      .set('x-user-id', user)
+      .expect(400);
+
+    const order = await request(server)
+      .get(`/orders/${created.body._id}`)
+      .set('x-user-id', user)
+      .expect(200);
+
+    expect(order.body.status).toBe('pending');
   });
 
   it('rechaza cantidades negativas (no debe permitir total negativo)', async () => {
