@@ -7,11 +7,13 @@
 
 ## Resumen ejecutivo
 
-| Nivel | Retos identificados | Prioridad |
-|-------|---------------------|-----------|
-| **1 — Bloqueantes** | Docker no levanta | 🔴 Crítica |
-| **2 — Core** | Conciliación infla la DB, saldo/stock incorrectos, IDOR, validación, errores silenciosos | 🔴 Alta |
-| **3 — Bonus** | N+1, índices, concurrencia robusta | 🟡 Media |
+
+| Nivel               | Retos identificados                                                                      | Prioridad  |
+| ------------------- | ---------------------------------------------------------------------------------------- | ---------- |
+| **1 — Bloqueantes** | Docker no levanta                                                                        | 🔴 Crítica |
+| **2 — Core**        | Conciliación infla la DB, saldo/stock incorrectos, IDOR, validación, errores silenciosos | 🔴 Alta    |
+| **3 — Bonus**       | N+1, índices, concurrencia robusta                                                       | 🟡 Media   |
+
 
 **Orden sugerido de implementación:** Nivel 1 → errores silenciosos + IDOR + validación → stock/saldo → conciliación → rendimiento (N+1/índices) → tests propios → `BUGS.md`.
 
@@ -25,8 +27,8 @@
 
 **Causas raíz identificadas en el código:**
 
-1. **`Dockerfile`:** `npm ci --omit=dev` elimina devDependencies, pero luego `npm run build` necesita `@nestjs/cli` y `typescript`.
-2. **`app.module.ts`:** MongoDB está hardcodeado a `mongodb://localhost:27017/market`. Dentro de Docker el host correcto es `mongo` (definido en `docker-compose.yml` como `MONGO_URI`).
+1. `**Dockerfile`:** `npm ci --omit=dev` elimina devDependencies, pero luego `npm run build` necesita `@nestjs/cli` y `typescript`.
+2. `**app.module.ts`:** MongoDB está hardcodeado a `mongodb://localhost:27017/market`. Dentro de Docker el host correcto es `mongo` (definido en `docker-compose.yml` como `MONGO_URI`).
 3. **Opcional:** `depends_on` no espera a que Mongo esté listo; la app puede fallar al primer intento de conexión.
 
 #### Solución A — Fix mínimo de infra
@@ -40,10 +42,12 @@
 - Leer `process.env.MONGO_URI` en `AppModule` (con fallback a localhost para desarrollo local).
 - Actualizar `.env.example` documentando ambos entornos.
 
-| Pros | Contras |
-|------|---------|
-| Cambios pequeños, rápido de implementar | No resuelve el race condition con Mongo al arrancar |
-| Cumple el requisito de entrega sin pasos manuales | Menos “production-ready” |
+
+| Pros                                              | Contras                                             |
+| ------------------------------------------------- | --------------------------------------------------- |
+| Cambios pequeños, rápido de implementar           | No resuelve el race condition con Mongo al arrancar |
+| Cumple el requisito de entrega sin pasos manuales | Menos “production-ready”                            |
+
 
 #### Solución B — Docker robusto con healthcheck
 
@@ -52,10 +56,12 @@
   - `depends_on: mongo: condition: service_healthy` en el servicio `app`.
   - Opcional: script `wait-for-it` o reintentos de conexión en bootstrap.
 
-| Pros | Contras |
-|------|---------|
+
+| Pros                                     | Contras                    |
+| ---------------------------------------- | -------------------------- |
 | Arranque determinista en CI y evaluación | Más archivos/configuración |
-| Demuestra criterio de infra maduro | Tiempo extra (~30 min) |
+| Demuestra criterio de infra maduro       | Tiempo extra (~30 min)     |
+
 
 #### ✅ Recomendación: **Solución B**
 
@@ -65,7 +71,7 @@ La evaluación exige que `docker compose up --build` funcione sin pasos manuales
 
 #### 💻 Código de la solución recomendada
 
-**`Dockerfile`**
+`**Dockerfile`**
 
 ```dockerfile
 FROM node:20-alpine AS builder
@@ -77,22 +83,22 @@ RUN npm ci
 
 COPY . .
 RUN npm run build
-RUN npm prune --omit=dev
 
 FROM node:20-alpine
 
 WORKDIR /app
 
-COPY --from=builder /app/node_modules ./node_modules
+COPY package*.json ./
+RUN npm ci --omit=dev
+
 COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/package.json ./package.json
 
 EXPOSE 3000
 
 CMD ["node", "dist/main.js"]
 ```
 
-**`src/app.module.ts`**
+`**src/app.module.ts**`
 
 ```typescript
 import { Module } from '@nestjs/common';
@@ -118,7 +124,7 @@ import { ReconciliationModule } from './reconciliation/reconciliation.module';
 export class AppModule {}
 ```
 
-**`docker-compose.yml`** (fragmento del servicio `mongo` y `app`)
+`**docker-compose.yml**` (fragmento del servicio `mongo` y `app`)
 
 ```yaml
 services:
@@ -178,10 +184,12 @@ services:
 - Antes de insertar, usar `findOne` o `updateOne` con `upsert` y `setOnInsert`.
 - Aumentar el intervalo (p. ej. 5–15 min) o usar `@Cron` de `@nestjs/schedule` (ya importado en `AppModule`).
 
-| Pros | Contras |
-|------|---------|
+
+| Pros                           | Contras                                                    |
+| ------------------------------ | ---------------------------------------------------------- |
 | Simple, ataca la causa directa | Sigue haciendo un `find` completo de pendientes cada ciclo |
-| Fácil de testear | |
+| Fácil de testear               |                                                            |
+
 
 #### Solución B — Cola de trabajo con estado de conciliación
 
@@ -189,10 +197,12 @@ services:
 - Procesar solo órdenes no conciliadas con `find({ status: 'pending', reconciledAt: null }).limit(N)`.
 - Marcar como conciliada tras éxito (transacción o `findOneAndUpdate` atómico).
 
-| Pros | Contras |
-|------|---------|
-| Escalable, no re-procesa órdenes ya vistas | Más cambios de schema |
-| Control de batch size | Overkill para el tamaño del proyecto |
+
+| Pros                                       | Contras                              |
+| ------------------------------------------ | ------------------------------------ |
+| Escalable, no re-procesa órdenes ya vistas | Más cambios de schema                |
+| Control de batch size                      | Overkill para el tamaño del proyecto |
+
 
 #### ✅ Recomendación: **Solución A**
 
@@ -202,7 +212,7 @@ Para el alcance de la prueba, la idempotencia con índice único + intervalo raz
 
 #### 💻 Código de la solución recomendada
 
-**`src/wallet/schemas/wallet-transaction.schema.ts`** (índice único parcial)
+`**src/wallet/schemas/wallet-transaction.schema.ts`** (índice único parcial)
 
 ```typescript
 export const WalletTransactionSchema =
@@ -217,7 +227,7 @@ WalletTransactionSchema.index(
 );
 ```
 
-**`src/reconciliation/reconciliation.service.ts`**
+`**src/reconciliation/reconciliation.service.ts**`
 
 ```typescript
 import { Injectable, Logger } from '@nestjs/common';
@@ -294,20 +304,24 @@ export class ReconciliationService {
 - En `create-order.dto.ts`: `@IsArray()`, `@ValidateNested()`, `@Min(1)` en `qty`, `@IsMongoId()` en `productId`.
 - Igual para `wallet/topup`: `@IsInt()`, `@Min(1)` en `amountCents`.
 
-| Pros | Contras |
-|------|---------|
-| Patrón estándar NestJS | Requiere DTOs bien definidos |
-| Reutilizable en todos los endpoints | |
+
+| Pros                                | Contras                      |
+| ----------------------------------- | ---------------------------- |
+| Patrón estándar NestJS              | Requiere DTOs bien definidos |
+| Reutilizable en todos los endpoints |                              |
+
 
 #### Solución B — Validación manual en el servicio
 
 - En `OrdersService.create()`, comprobar `item.qty > 0` y lanzar `BadRequestException`.
 - Repetir en controller de wallet.
 
-| Pros | Contras |
-|------|---------|
+
+| Pros                      | Contras                                           |
+| ------------------------- | ------------------------------------------------- |
 | Rápido para un solo campo | Duplicación, fácil de olvidar en nuevos endpoints |
-| No depende de pipes | No escala |
+| No depende de pipes       | No escala                                         |
+
 
 #### ✅ Recomendación: **Solución A**
 
@@ -317,7 +331,7 @@ export class ReconciliationService {
 
 #### 💻 Código de la solución recomendada
 
-**`src/app-setup.ts`**
+`**src/app-setup.ts`**
 
 ```typescript
 import { INestApplication, ValidationPipe } from '@nestjs/common';
@@ -334,7 +348,7 @@ export function configureApp(app: INestApplication): void {
 }
 ```
 
-**`src/orders/dto/create-order.dto.ts`**
+`**src/orders/dto/create-order.dto.ts**`
 
 ```typescript
 import { Type } from 'class-transformer';
@@ -365,7 +379,7 @@ export class CreateOrderDto {
 }
 ```
 
-**`src/wallet/dto/topup.dto.ts`** (nuevo)
+`**src/wallet/dto/topup.dto.ts**` (nuevo)
 
 ```typescript
 import { IsInt, Min } from 'class-validator';
@@ -377,7 +391,7 @@ export class TopupDto {
 }
 ```
 
-**`src/wallet/wallet.controller.ts`** (usar el DTO)
+`**src/wallet/wallet.controller.ts**` (usar el DTO)
 
 ```typescript
 import { TopupDto } from './dto/topup.dto';
@@ -416,20 +430,24 @@ const order = await this.orderModel.findOne({ _id: orderId, userId });
 if (!order) throw new NotFoundException('Orden no encontrada');
 ```
 
-| Pros | Contras |
-|------|---------|
-| Una query, respuesta 404 uniforme (no filtra existencia) | |
-| Patrón OWASP recomendado | |
+
+| Pros                                                     | Contras |
+| -------------------------------------------------------- | ------- |
+| Una query, respuesta 404 uniforme (no filtra existencia) |         |
+| Patrón OWASP recomendado                                 |         |
+
 
 #### Solución B — Guard/middleware de autorización
 
 - Crear `OrderOwnershipGuard` que valide pertenencia antes del handler.
 - Centralizar lógica de “recurso propio” para futuros endpoints.
 
-| Pros | Contras |
-|------|---------|
+
+| Pros                             | Contras                         |
+| -------------------------------- | ------------------------------- |
 | Escalable si hay muchos recursos | Más boilerplate para 1 endpoint |
-| Separación de responsabilidades | |
+| Separación de responsabilidades  |                                 |
+
 
 #### ✅ Recomendación: **Solución A**
 
@@ -439,7 +457,7 @@ Para un solo endpoint, el filtro en query es correcto, seguro (404 en ambos caso
 
 #### 💻 Código de la solución recomendada
 
-**`src/orders/orders.service.ts`** — métodos `findOneForUser` y filtro en `pay`
+`**src/orders/orders.service.ts`** — métodos `findOneForUser` y filtro en `pay`
 
 ```typescript
 async findOneForUser(userId: string, orderId: string) {
@@ -492,20 +510,24 @@ if (!updated) throw new BadRequestException('Stock insuficiente');
 
 - Ejecutar dentro de una **transacción MongoDB** junto con el débito de wallet y el cambio de estado de la orden.
 
-| Pros | Contras |
-|------|---------|
+
+| Pros                              | Contras                                                                   |
+| --------------------------------- | ------------------------------------------------------------------------- |
 | Atómico, seguro ante concurrencia | Requiere replica set / transacciones (memory server en tests las soporta) |
-| Correcto a nivel de negocio | |
+| Correcto a nivel de negocio       |                                                                           |
+
 
 #### Solución B — Validar stock solo al crear la orden
 
 - En `create()`, rechazar si `qty > product.stock`.
 - No volver a validar en `pay()`.
 
-| Pros | Contras |
-|------|---------|
-| Simple | **No resuelve** race entre dos pagos simultáneos |
-| Evita órdenes obvias | Stock puede cambiar entre create y pay |
+
+| Pros                 | Contras                                          |
+| -------------------- | ------------------------------------------------ |
+| Simple               | **No resuelve** race entre dos pagos simultáneos |
+| Evita órdenes obvias | Stock puede cambiar entre create y pay           |
+
 
 #### ✅ Recomendación: **Solución A**
 
@@ -582,20 +604,24 @@ await session.withTransaction(async () => {
 });
 ```
 
-| Pros | Contras |
-|------|---------|
-| Correcto ante concurrencia | Requiere transacciones Mongo |
-| Un solo flujo coherente wallet + order + stock | |
+
+| Pros                                           | Contras                      |
+| ---------------------------------------------- | ---------------------------- |
+| Correcto ante concurrencia                     | Requiere transacciones Mongo |
+| Un solo flujo coherente wallet + order + stock |                              |
+
 
 #### Solución B — Optimistic locking (campo `version`)
 
 - Añadir `@Prop() version` en `Wallet` y `Product`.
 - Reintentar en conflicto de versión (patrón retry).
 
-| Pros | Contras |
-|------|---------|
+
+| Pros                                       | Contras                            |
+| ------------------------------------------ | ---------------------------------- |
 | Funciona sin transacciones multi-documento | Más complejo, lógica de reintentos |
-| | Peor UX bajo alta contención |
+|                                            | Peor UX bajo alta contención       |
+
 
 #### ✅ Recomendación: **Solución A**
 
@@ -605,7 +631,7 @@ MongoDB 4+ con transacciones es el enfoque natural para “pago = débito + stoc
 
 #### 💻 Código de la solución recomendada
 
-**`src/orders/orders.service.ts`** — inyectar conexión e implementar `pay()` completo (integra 2.4, 2.5, 2.6 y evita N+1 en stock):
+`**src/orders/orders.service.ts`** — inyectar conexión e implementar `pay()` completo (integra 2.4, 2.5, 2.6 y evita N+1 en stock):
 
 ```typescript
 import {
@@ -729,20 +755,24 @@ También: saldo insuficiente no lanza excepción; devuelve orden `pending` con H
 - Lanzar `ConflictException` si la orden ya está pagada.
 - Loguear errores inesperados con `Logger.error`.
 
-| Pros | Contras |
-|------|---------|
+
+| Pros                               | Contras                                       |
+| ---------------------------------- | --------------------------------------------- |
 | Comportamiento HTTP correcto (4xx) | Requiere ajustar tests que asumen 201 siempre |
-| Transparente para el cliente | |
+| Transparente para el cliente       |                                               |
+
 
 #### Solución B — Resultado tipado (discriminated union)
 
 - `pay()` retorna `{ ok: true, order } | { ok: false, reason: 'INSUFFICIENT_FUNDS' | ... }`.
 - El controller mapea a status HTTP.
 
-| Pros | Contras |
-|------|---------|
+
+| Pros                               | Contras                    |
+| ---------------------------------- | -------------------------- |
 | Control explícito del contrato API | Menos idiomático en NestJS |
-| | Más código en controller |
+|                                    | Más código en controller   |
+
 
 #### ✅ Recomendación: **Solución A**
 
@@ -770,7 +800,7 @@ async pay(userId: string, orderId: string) {
 // se convierten automáticamente en 400, 404 y 409.
 ```
 
-**`src/orders/orders.controller.ts`** — códigos HTTP explícitos (opcional pero claro):
+`**src/orders/orders.controller.ts**` — códigos HTTP explícitos (opcional pero claro):
 
 ```typescript
 import {
@@ -831,18 +861,22 @@ const products = await this.productModel.find({ _id: { $in: ids } });
 const byId = new Map(products.map(p => [p._id.toString(), p]));
 ```
 
-| Pros | Contras |
-|------|---------|
+
+| Pros                  | Contras                                   |
+| --------------------- | ----------------------------------------- |
 | 1 query en lugar de N | Hay que validar que todos los IDs existen |
-| Cambio localizado | |
+| Cambio localizado     |                                           |
+
 
 #### Solución B — DataLoader (patrón GraphQL/batching)
 
 - Cache por request para deduplicar lecturas de productos.
 
-| Pros | Contras |
-|------|---------|
+
+| Pros                                   | Contras                           |
+| -------------------------------------- | --------------------------------- |
 | Elegante en APIs con muchas relaciones | Over-engineering para REST simple |
+
 
 #### ✅ Recomendación: **Solución A**
 
@@ -852,7 +886,7 @@ Suficiente para demostrar conciencia de rendimiento sin añadir dependencias.
 
 #### 💻 Código de la solución recomendada
 
-**`src/orders/orders.service.ts`** — método `create()` con batch query:
+`**src/orders/orders.service.ts`** — método `create()` con batch query:
 
 ```typescript
 async create(userId: string, dto: CreateOrderDto) {
@@ -907,18 +941,22 @@ OrderSchema.index({ status: 1 }); // conciliación
 WalletTransactionSchema.index({ orderId: 1, type: 1 }, { unique: true, partialFilterExpression: { type: 'reconciliation' } });
 ```
 
-| Pros | Contras |
-|------|---------|
+
+| Pros                             | Contras                                                            |
+| -------------------------------- | ------------------------------------------------------------------ |
 | Declarativo, se crea al arrancar | Índices únicos pueden fallar si ya hay duplicados (limpiar en dev) |
-| Mejora conciliación e IDOR | |
+| Mejora conciliación e IDOR       |                                                                    |
+
 
 #### Solución B — Script de migración separado
 
 - `npm run migrate:indexes` con `createIndexes()` explícito.
 
-| Pros | Contras |
-|------|---------|
+
+| Pros                           | Contras                                                            |
+| ------------------------------ | ------------------------------------------------------------------ |
 | Control en despliegues grandes | Paso manual extra (conflicto con requisito Docker sin pasos extra) |
+
 
 #### ✅ Recomendación: **Solución A**
 
@@ -928,7 +966,7 @@ Los índices en schema son automáticos y alineados con NestJS/Mongoose. El índ
 
 #### 💻 Código de la solución recomendada
 
-**`src/orders/schemas/order.schema.ts`**
+`**src/orders/schemas/order.schema.ts`**
 
 ```typescript
 export const OrderSchema = SchemaFactory.createForClass(Order);
@@ -938,7 +976,7 @@ OrderSchema.index({ status: 1 });               // conciliación de pendientes
 OrderSchema.index({ userId: 1, status: 1 });  // consultas combinadas
 ```
 
-**`src/wallet/schemas/wallet-transaction.schema.ts`**
+`**src/wallet/schemas/wallet-transaction.schema.ts**`
 
 ```typescript
 export const WalletTransactionSchema =
@@ -954,7 +992,7 @@ WalletTransactionSchema.index(
 );
 ```
 
-**`src/wallet/schemas/wallet.schema.ts`** — ya tiene `@Prop({ unique: true })` en `userId`; opcionalmente reforzar:
+`**src/wallet/schemas/wallet.schema.ts**` — ya tiene `@Prop({ unique: true })` en `userId`; opcionalmente reforzar:
 
 ```typescript
 export const WalletSchema = SchemaFactory.createForClass(Wallet);
@@ -974,19 +1012,23 @@ WalletSchema.index({ userId: 1 }, { unique: true });
 - Disparar ambos `POST /orders/:id/pay` en paralelo.
 - Assert: una `paid`, otra falla; `balanceCents >= 0`.
 
-| Pros | Contras |
-|------|---------|
-| Reproduce el bug real | Puede ser flaky sin fix atómico |
-| Valorado en la evaluación | |
+
+| Pros                      | Contras                         |
+| ------------------------- | ------------------------------- |
+| Reproduce el bug real     | Puede ser flaky sin fix atómico |
+| Valorado en la evaluación |                                 |
+
 
 #### Solución B — Test de integración unitario con mocks de race
 
 - Mockear `findOne` para simular interleaving.
 
-| Pros | Contras |
-|------|---------|
-| Determinista | No prueba el stack completo |
-| | Menos convincente en defensa oral |
+
+| Pros         | Contras                           |
+| ------------ | --------------------------------- |
+| Determinista | No prueba el stack completo       |
+|              | Menos convincente en defensa oral |
+
 
 #### ✅ Recomendación: **Solución A**
 
@@ -996,7 +1038,7 @@ La prueba pide tests que reproduzcan bugs reales. Implementar el test **antes** 
 
 #### 💻 Código de la solución recomendada
 
-**`test/orders.e2e-spec.ts`** — reemplazar el `it.todo` por:
+`**test/orders.e2e-spec.ts`** — reemplazar el `it.todo` por:
 
 ```typescript
 it('los pagos concurrentes no permiten gastar más que el saldo', async () => {
@@ -1052,15 +1094,17 @@ it('los pagos concurrentes no permiten gastar más que el saldo', async () => {
 
 ### Reto E.1 — Completar `BUGS.md`
 
-| Solución A | Solución B |
-|------------|------------|
+
+| Solución A                                                        | Solución B                                             |
+| ----------------------------------------------------------------- | ------------------------------------------------------ |
 | Una entrada por bug con plantilla del repo (3–4 líneas por campo) | Mismo contenido + diagrama de flujo del pago corregido |
+
 
 **✅ Recomendación:** Solución A (cumple el formato pedido). Usa el orden de los retos de este plan como índice.
 
 #### 💻 Código de la solución recomendada
 
-Ejemplo de entrada en **`BUGS.md`** (Bug: IDOR):
+Ejemplo de entrada en `**BUGS.md`** (Bug: IDOR):
 
 ```markdown
 ## Bug 5 — IDOR en GET /orders/:id
@@ -1077,9 +1121,11 @@ Ejemplo de entrada en **`BUGS.md`** (Bug: IDOR):
 
 ### Reto E.2 — Repositorio GitHub público
 
-| Solución A | Solución B |
-|------------|------------|
+
+| Solución A                                    | Solución B                                     |
+| --------------------------------------------- | ---------------------------------------------- |
 | Fork/clone → branch `fix/all-bugs` → PR único | Commits atómicos por nivel (1, 2, 3) en `main` |
+
 
 **✅ Recomendación:** Commits atómicos por nivel — facilita la defensa oral (“primero infra, luego core…”).
 
@@ -1252,18 +1298,20 @@ export class OrdersService {
 
 ## Mapa bug → archivo → fix recomendado
 
-| # | Bug | Archivo(s) | Fix recomendado |
-|---|-----|------------|-----------------|
-| 1 | Docker build falla | `Dockerfile` | Multi-stage / no omitir devDeps en build |
-| 2 | Mongo incorrecto en Docker | `app.module.ts` | `MONGO_URI` desde env |
-| 3 | DB crece sin parar | `reconciliation.service.ts` | Idempotencia + intervalo largo |
-| 4 | qty negativo → 201 | `app-setup.ts`, DTOs | ValidationPipe + `@Min(1)` |
-| 5 | IDOR en GET order | `orders.service.ts` | `findOne({ _id, userId })` |
-| 6 | Stock negativo | `orders.service.ts` | `$inc` condicional + transacción |
-| 7 | Saldo negativo concurrente | `orders.service.ts` | Transacción + `$inc` atómico en wallet |
-| 8 | Pago fallido = éxito | `orders.service.ts` | Eliminar catch silencioso; 4xx |
-| 9 | N+1 productos | `orders.service.ts` | `find({ _id: { $in } })` |
-| 10 | Sin índices | schemas | `Schema.index(...)` |
+
+| #   | Bug                        | Archivo(s)                  | Fix recomendado                          |
+| --- | -------------------------- | --------------------------- | ---------------------------------------- |
+| 1   | Docker build falla         | `Dockerfile`                | Multi-stage / no omitir devDeps en build |
+| 2   | Mongo incorrecto en Docker | `app.module.ts`             | `MONGO_URI` desde env                    |
+| 3   | DB crece sin parar         | `reconciliation.service.ts` | Idempotencia + intervalo largo           |
+| 4   | qty negativo → 201         | `app-setup.ts`, DTOs        | ValidationPipe + `@Min(1)`               |
+| 5   | IDOR en GET order          | `orders.service.ts`         | `findOne({ _id, userId })`               |
+| 6   | Stock negativo             | `orders.service.ts`         | `$inc` condicional + transacción         |
+| 7   | Saldo negativo concurrente | `orders.service.ts`         | Transacción + `$inc` atómico en wallet   |
+| 8   | Pago fallido = éxito       | `orders.service.ts`         | Eliminar catch silencioso; 4xx           |
+| 9   | N+1 productos              | `orders.service.ts`         | `find({ _id: { $in } })`                 |
+| 10  | Sin índices                | schemas                     | `Schema.index(...)`                      |
+
 
 ---
 
@@ -1279,13 +1327,15 @@ export class OrdersService {
 
 ## Estimación de tiempo
 
-| Fase | Tiempo estimado |
-|------|-----------------|
-| Nivel 1 (Docker) | 1–2 h |
-| Nivel 2 (core bugs) | 4–6 h |
-| Nivel 3 (N+1, índices, test concurrencia) | 2–3 h |
-| BUGS.md + defensa | 1–2 h |
-| **Total** | **~8–13 h** (dentro de 2 días) |
+
+| Fase                                      | Tiempo estimado                |
+| ----------------------------------------- | ------------------------------ |
+| Nivel 1 (Docker)                          | 1–2 h                          |
+| Nivel 2 (core bugs)                       | 4–6 h                          |
+| Nivel 3 (N+1, índices, test concurrencia) | 2–3 h                          |
+| BUGS.md + defensa                         | 1–2 h                          |
+| **Total**                                 | **~8–13 h** (dentro de 2 días) |
+
 
 ---
 
