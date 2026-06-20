@@ -22,3 +22,11 @@ export class WalletTransaction {
 
 export const WalletTransactionSchema =
   SchemaFactory.createForClass(WalletTransaction);
+
+WalletTransactionSchema.index(
+  { orderId: 1, type: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { type: 'reconciliation' },
+  },
+);

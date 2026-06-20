@@ -1,4 +1,5 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Order, OrderDocument } from '../orders/schemas/order.schema';
@@ -8,7 +9,7 @@ import {
 } from '../wallet/schemas/wallet-transaction.schema';
 
 @Injectable()
-export class ReconciliationService implements OnModuleInit {
+export class ReconciliationService {
   private readonly logger = new Logger(ReconciliationService.name);
 
   constructor(
@@ -18,21 +19,34 @@ export class ReconciliationService implements OnModuleInit {
     private readonly txModel: Model<WalletTransactionDocument>,
   ) {}
 
-  onModuleInit(): void {
-    // Conciliación periódica de órdenes pendientes.
-    setInterval(() => this.reconcilePendingOrders(), 1000);
-  }
-
+  @Cron(CronExpression.EVERY_5_MINUTES)
   async reconcilePendingOrders(): Promise<void> {
-    const pending = await this.orderModel.find({ status: 'pending' });
+    const pending = await this.orderModel
+      .find({ status: 'pending' })
+      .select('_id userId')
+      .limit(100)
+      .lean();
 
     for (const order of pending) {
-      await this.txModel.create({
-        userId: order.userId,
-        amountCents: 0,
-        type: 'reconciliation',
-        orderId: order._id.toString(),
-      });
+      const orderId = order._id.toString();
+      try {
+        await this.txModel.updateOne(
+          { orderId, type: 'reconciliation' },
+          {
+            $setOnInsert: {
+              userId: order.userId,
+              amountCents: 0,
+              type: 'reconciliation',
+              orderId,
+            },
+          },
+          { upsert: true },
+        );
+      } catch (err: any) {
+        if (err?.code !== 11000) {
+          this.logger.error(`Error conciliando orden ${orderId}`, err);
+        }
+      }
     }
   }
 }
