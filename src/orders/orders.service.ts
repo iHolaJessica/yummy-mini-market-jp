@@ -64,35 +64,36 @@ export class OrdersService {
   }
 
   async pay(userId: string, orderId: string) {
-    const order = await this.orderModel.findOne({ _id: orderId, userId });
-    if (!order) {
-      throw new NotFoundException('Orden no encontrada');
-    }
-    if (order.status === 'paid') {
-      throw new ConflictException('La orden ya fue pagada');
-    }
-
     const session = await this.connection.startSession();
 
     try {
+      let paidOrder: OrderDocument | null = null;
+
       await session.withTransaction(async () => {
-        const pending = await this.orderModel
+        const order = await this.orderModel
           .findOne({ _id: orderId, userId, status: 'pending' })
           .session(session);
 
-        if (!pending) {
-          return;
+        if (!order) {
+          const existing = await this.orderModel
+            .findOne({ _id: orderId, userId })
+            .session(session);
+          if (existing?.status === 'paid') {
+            throw new ConflictException('La orden ya fue pagada');
+          }
+          throw new NotFoundException('Orden no encontrada');
         }
 
-        const wallet = await this.walletModel.findOne({ userId }).session(session);
-        if (!wallet || wallet.balanceCents < pending.totalCents) {
+        const wallet = await this.walletModel.findOneAndUpdate(
+          { userId, balanceCents: { $gte: order.totalCents } },
+          { $inc: { balanceCents: -order.totalCents } },
+          { session, new: true },
+        );
+        if (!wallet) {
           throw new BadRequestException('Saldo insuficiente');
         }
 
-        wallet.balanceCents -= pending.totalCents;
-        await wallet.save({ session });
-
-        for (const item of pending.items) {
+        for (const item of order.items) {
           const updated = await this.productModel.findOneAndUpdate(
             { _id: item.productId, stock: { $gte: item.qty } },
             { $inc: { stock: -item.qty } },
@@ -105,21 +106,25 @@ export class OrdersService {
           }
         }
 
-        pending.status = 'paid';
-        await pending.save({ session });
+        order.status = 'paid';
+        await order.save({ session });
 
         await this.txModel.create(
           [
             {
               userId,
-              amountCents: -pending.totalCents,
+              amountCents: -order.totalCents,
               type: 'payment',
               orderId,
             },
           ],
           { session },
         );
+
+        paidOrder = order;
       });
+
+      return paidOrder;
     } catch (e) {
       if (e instanceof HttpException) {
         throw e;
@@ -129,8 +134,6 @@ export class OrdersService {
     } finally {
       await session.endSession();
     }
-
-    return this.orderModel.findOne({ _id: orderId, userId });
   }
 
   async findOneForUser(userId: string, orderId: string) {

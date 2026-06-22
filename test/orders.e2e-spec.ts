@@ -127,8 +127,47 @@ describe('Orders', () => {
     expect(product.stock).toBeGreaterThanOrEqual(0);
   });
 
-  // TODO (candidato): el saldo de la wallet y el stock deben ser seguros ante
-  // operaciones concurrentes (ver "Comportamiento esperado" en el README).
-  // Se valora que escribas un test que reproduzca el problema de concurrencia.
-  it.todo('los pagos concurrentes no permiten gastar más que el saldo');
+  it('los pagos concurrentes no permiten gastar más que el saldo', async () => {
+    const user = 'user-concurrent';
+    const priceCents = 500;
+    const productId = await seedProduct(priceCents, 100);
+
+    await request(server)
+      .post('/wallet/topup')
+      .set('x-user-id', user)
+      .send({ amountCents: priceCents })
+      .expect(201);
+
+    const orderA = await request(server)
+      .post('/orders')
+      .set('x-user-id', user)
+      .send({ items: [{ productId, qty: 1 }] })
+      .expect(201);
+
+    const orderB = await request(server)
+      .post('/orders')
+      .set('x-user-id', user)
+      .send({ items: [{ productId, qty: 1 }] })
+      .expect(201);
+
+    const [payA, payB] = await Promise.all([
+      request(server)
+        .post(`/orders/${orderA.body._id}/pay`)
+        .set('x-user-id', user),
+      request(server)
+        .post(`/orders/${orderB.body._id}/pay`)
+        .set('x-user-id', user),
+    ]);
+
+    const statuses = [payA.status, payB.status].sort();
+    expect(statuses).toContain(400);
+    expect(statuses.some((s) => s >= 200 && s < 300)).toBe(true);
+
+    const wallet = await request(server)
+      .get('/wallet')
+      .set('x-user-id', user)
+      .expect(200);
+
+    expect(wallet.body.balanceCents).toBeGreaterThanOrEqual(0);
+  });
 });
