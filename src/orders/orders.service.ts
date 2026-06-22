@@ -34,11 +34,15 @@ export class OrdersService {
   ) {}
 
   async create(userId: string, dto: CreateOrderDto) {
+    const productIds = dto.items.map((i) => i.productId);
+    const products = await this.productModel.find({ _id: { $in: productIds } });
+    const byId = new Map(products.map((p) => [p._id.toString(), p]));
+
     const items: OrderItem[] = [];
     let total = 0;
 
     for (const item of dto.items) {
-      const product = await this.productModel.findById(item.productId);
+      const product = byId.get(item.productId);
       if (!product) {
         throw new NotFoundException(`Producto ${item.productId} no existe`);
       }
