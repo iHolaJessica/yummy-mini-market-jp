@@ -23,6 +23,7 @@ export class WalletTransaction {
 export const WalletTransactionSchema =
   SchemaFactory.createForClass(WalletTransaction);
 
+WalletTransactionSchema.index({ userId: 1, createdAt: -1 });
 WalletTransactionSchema.index(
   { orderId: 1, type: 1 },
   {
